@@ -1,0 +1,9 @@
+colorkit derives its bounded HSV arithmetic and initial color data from nb1,
+maintained by the blink(1) user group under the MIT license.
+Source: https://github.com/b1ug/nb1/tree/112e224db3bcb7af823e4f403eec01f59a19d418/internal/colorinput
+
+The opaque CSS named-color table is frozen from W3C CSS Color 4 (2026-11-03):
+https://www.w3.org/TR/2026/CRD-css-color-4-20261103/#named-colors
+The table and regression fixture preserve source/data hashes for verification.
+
+No third-party Go modules are included or required.

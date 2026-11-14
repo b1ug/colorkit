@@ -1,0 +1,106 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOWORK: "off"
+  GOTOOLCHAIN: local
+  CGO_ENABLED: "0"
+  GOPROXY: "off"
+  GOSUMDB: "off"
+
+jobs:
+  native:
+    name: Native / ${{ matrix.os }} / Go ${{ matrix.go }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2022]
+        go: ["1.26.11", "1.27.4"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Check module and native build
+        run: |
+          go version
+          python3 tools/check-module.py
+          go build -mod=readonly ./...
+      - name: Race tests
+        env:
+          CGO_ENABLED: "1"
+        run: go test -mod=readonly -race -count=1 -timeout=3m ./...
+      - name: Vet and module immutability
+        run: |
+          go vet -mod=readonly ./...
+          git diff --exit-code -- go.mod go.sum
+
+  source-floor:
+    name: Source floor / Go 1.13.15
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.13.15"
+          cache: false
+      - name: Check actual Go 1.13 compiler and standard library
+        run: |
+          go version
+          python3 tools/check-module.py
+          go build -mod=readonly ./...
+          go test -mod=readonly -count=1 -timeout=3m ./...
+          go vet -mod=readonly ./...
+          GOOS=js GOARCH=wasm go build -mod=readonly -o /tmp/colorkit-floor.wasm ./internal/wasmvectors
+          git diff --exit-code -- go.mod go.sum
+
+  wasm:
+    name: WASM execution / Go 1.27.4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.4"
+          cache: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "26.12.1"
+      - name: Compare actual native and WASM results
+        run: |
+          go version
+          node --version
+          python3 tools/check-module.py
+          go run -mod=readonly ./internal/wasmvectors > /tmp/native.txt
+          GOOS=js GOARCH=wasm go build -mod=readonly -o /tmp/colorkit.wasm ./internal/wasmvectors
+          node "$(go env GOROOT)/lib/wasm/wasm_exec_node.js" /tmp/colorkit.wasm > /tmp/wasm.txt
+          cmp /tmp/native.txt /tmp/wasm.txt
+          git diff --exit-code -- go.mod go.sum
